@@ -1,4 +1,4 @@
-package models
+package app.models
 
 import zio.json._
 

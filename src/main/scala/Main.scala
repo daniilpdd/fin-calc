@@ -1,8 +1,12 @@
-import models.{Employee, Position}
+import app.models.{Employee, Position}
+import app.persisatence.EmployeePersistence.{DBTransactor, EmployeePersistence}
+import app.persistenceImpl.EmployeePersistenceImpl
 import zhttp.http._
 import zhttp.service.Server
+import zio.blocking.Blocking
+import zio.console.putStrLn
 import zio.json._
-import zio.{ExitCode, URIO}
+import zio.{ExitCode, URIO, ZEnv, ZIO}
 
 import scala.collection.mutable.ListBuffer
 
@@ -21,18 +25,21 @@ object Main extends zio.App {
     case Method.GET -> a / "employee" => Response.jsonString(employees.toJson)
   }
 
-  val positionRoutes = HttpApp.collect {
-    case req @ Method.POST -> a / "positions" =>
-      req.getBodyAsString.map(_.fromJson[Position]).get match {
-        case Left(value) => Response.jsonString(s"""{"message": "$value"}""")
-        case Right(empl) =>
-          positions.addOne(empl)
-          Response.jsonString("""{"message": "Position adding success!"}""")
-      }
-    case Method.GET -> a / "positions" => Response.jsonString(positions.toJson)
+  val app = employeeRoutes
+
+  type AppEnv = DBTransactor with EmployeePersistence
+
+  val appEnv = Blocking.live >+> EmployeePersistenceImpl.live
+
+  override def run(args: List[String]): URIO[ZEnv, ExitCode] = {
+    val program: ZIO[AppEnv, Throwable, Unit] = for {
+      _ <- EmployeePersistenceImpl.createEmployeeTable
+      _ <- Server.start(8090, app)
+    } yield ()
+
+    program
+      .provideSomeLayer[ZEnv](appEnv)
+      .tapError(err => putStrLn(s"Execution failed with: $err"))
+      .exitCode
   }
-
-  val app = employeeRoutes +++ positionRoutes
-
-  override def run(args: List[String]): URIO[zio.ZEnv, ExitCode] = Server.start(8090, app).exitCode
 }
